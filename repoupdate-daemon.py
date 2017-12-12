@@ -25,6 +25,7 @@ import createrepo
 import boto
 import boto.sqs
 import boto.sqs.message
+import boto.sns
 from boto.sqs.jsonmessage import json
 
 
@@ -160,6 +161,8 @@ def main(options, args):
                           options.queue_check_interval)
     logging.debug('sqs visibility_timeout: %d', visibility_timeout)
 
+    sns = boto.sns.connect_to_region(options.region)
+
     while True:
         new_messages = queue.get_messages(10, visibility_timeout)
         if new_messages:
@@ -181,9 +184,14 @@ def main(options, args):
                     logging.info('updating: %s: %r', repopath, rpmfiles)
                     try:
                         update_repodata(repopath, set(rpmfiles), options)
+
                     except:
                         # sqs messages will be deleted even on failure
                         logging.exception('update failed: %s: %r', repopath, rpmfiles)
+
+                    for r in set(rpmfiles):
+                        sns.publish(options.status_sns_topic, r, "ok")
+
                 # Reset:
                 for message in messages:
                     message.delete()
@@ -215,6 +223,7 @@ if __name__ == '__main__':
     parser.add_option('-d', '--daemon', action='store_true')
     parser.add_option('-P', '--pidfile')
     parser.add_option('-U', '--user')
+    parser.add_option('--status-sns-topic')
     parser.add_option('--queue-check-interval', type='int', default=60)
     parser.add_option('--process-delay-count', type='int', default=2)
     options, args = parser.parse_args()
@@ -223,6 +232,8 @@ if __name__ == '__main__':
         parser.error("Must specify SQS queue name or rpm file args")
     if options.sqs_name and args:
         parser.error("Don't give file args when specifying an SQS queue")
+    if not options.status_sns_topic:
+        parser.error("Please provide sns topic for status messages")
 
     if options.daemon:
         import daemon
